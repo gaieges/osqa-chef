@@ -16,137 +16,139 @@
 # limitations under the License.
 #
 
-# Install required packages
-%w{libapache2-mod-wsgi python-setuptools subversion python-mysqldb python-pip}.each do |pkg|
+# include the standard recipies
+include_recipe "iptables"
+include_recipe "apache2"
+
+# add the EPEL repo
+yum_repository 'epel' do
+  description 'Extra Packages for Enterprise Linux'
+  mirrorlist 'http://mirrors.fedoraproject.org/mirrorlist?repo=epel-6&arch=$basearch'
+  gpgkey 'http://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-6'
+  action :create
+end if platform_family?("rhel")
+
+# Install required system packages
+case node['platform_family'] 
+when "rhel"
+  pkgs = %w[mod_wsgi python-setuptools subversion MySQL-python python-pip]
+when "debian"
+  pkgs = %w[libapache2-mod-wsgi python-setuptools subversion python-mysqldb python-pip]
+end
+
+pkgs.each do |pkg|
   package pkg do
     action :install
   end
 end
 
-# New user group
+# create new user group
 group "osqa" do
+  members node['apache']['user']
+  action :create
 end
 
-# New user
+# create new user
 user "osqa" do
   comment "OSQA User"
-  uid 1002
   group "osqa"
-  home "/home/osqa"
   shell "/bin/bash"
+  supports :manage_home => true
+  action :create
 end
 
-# The default directory action is created
-directory "/home/osqa/" do
+# ensure that home dir is setup
+directory node[:osqa][:home_dir] do
   owner "osqa"
   group "osqa"
-end
-directory "/home/osqa/osqa-server/" do
-  owner "osqa"
-  group "osqa"
-end
-
-# We clean up the apache directory
-file "/etc/apache2/sites-available/default" do
-  action :delete
-end
-file "/etc/apache2/sites-available/default-ssl" do
-  action :delete
-end
-file "/etc/apache2/sites-enabled/000-default" do
-  action :delete
-end
-file "/etc/apache2/sites-enabled/osqa" do
-  action :delete
-end
-file "/etc/apache2/sites-available/osqa" do
-  action :delete
+  mode 0770
 end
 
 # New vhost for OSQA
-template "/etc/apache2/sites-available/osqa" do
-  source "osqa"
-  mode 0755
+web_app "osqa" do
+  template "mods/osqa.conf.erb"
+  server_name node['fqdn']
+  docroot node['osqa']['app_dir']
 end
 
-# Symbolic Link to our vhost
-execute "ln" do
-  command "ln -s /etc/apache2/sites-available/osqa /etc/apache2/sites-enabled/osqa"
-  action :run
-  environment ({'HOME' => '/home/osqa'})
+
+# do some easy installs if needed
+%w[South django-debug-toolbar Markdown html5lib python-openid].each do |pkg|
+  execute "easy_install[#{pkg}]" do
+   command "easy_install #{pkg}"
+   action :run
+   not_if "pip freeze | grep -q #{pkg}"
+  end
 end
 
-# Required Libraries
-execute "easy_install" do
-  command "easy_install South django-debug-toolbar markdown \
-      html5lib python-openid"
-  action :run
-  environment ({'HOME' => '/home/osqa'})
-end
 # Install Django version 1.3.1
 execute "pip" do
-  command "pip install django==1.3.1"
+  command "pip install Django==1.3.1"
   action :run
-  environment ({'HOME' => '/home/osqa'})
-end
-# Cleaning OSQA folder in case of a previous version
-directory "/home/osqa/osqa-server" do
-    action :delete
-    recursive true
-end
-directory "/home/osqa/osqa-server/" do
-  owner "osqa"
-  group "osqa"
+  not_if "pip freeze | grep -q Django==1.3.1"
 end
 
-# Download OSQA
-execute "svn" do
-  command "svn co http://svn.osqa.net/svnroot/osqa/trunk/ /home/osqa/osqa-server"
-  action :run
-  environment ({'HOME' => '/home/osqa'})
+# Download OSQA code, store in home dir
+subversion "osqa-server" do
+  repository node[:osqa][:svn_url]
+  destination node[:osqa][:app_dir]
+  action :sync
 end
 
 # New file, mandatory for OSQA
-template "/home/osqa/osqa-server/osqa.wsgi" do
-  source "osqa.wsgi"
+template "#{node[:osqa][:app_dir]}/osqa.wsgi" do
+  source "osqa.wsgi.erb"
   mode 0755
 end
 
 # OSQA Configuration file
-template "/home/osqa/osqa-server/settings_local.py" do
-  source "settings_local.py"
+template "#{node[:osqa][:app_dir]}/settings_local.py" do
+  source "settings_local.py.erb"
   mode 0755
 end
 
+
 # Populate the OSQA Database
 execute "python syncdb" do
-  command "python /home/osqa/osqa-server/manage.py syncdb --all"
+  command "python #{node[:osqa][:app_dir]}/manage.py syncdb --all --noinput"
   action :run
-  environment ({'HOME' => '/home/osqa/osqa-server'})
+  environment ({ 'HOME' => node[:osqa][:app_dir] })
 end
+
 # Populate the OSQA Database
 execute "python migrate" do
-  command "python /home/osqa/osqa-server/manage.py migrate forum --fake"
+  command "python #{node[:osqa][:app_dir]}/manage.py migrate forum --fake"
   action :run
-  environment ({'HOME' => '/home/osqa/osqa-server'})
+  environment ( { 'HOME' => node[:osqa][:app_dir] } )
 end
-# Rights
-execute "chown osqa server" do
-  command "chown -R osqa:www-data /home/osqa/osqa-server"
-  action :run
-  environment ({'HOME' => '/home/osqa/osqa-server'})
+
+# The default directory action is created
+directory node[:osqa][:home_dir] do
+  owner "osqa"
+  group "osqa"
+  mode 0750
 end
-execute "chmod upfile" do
-  command "chmod -R g+w /home/osqa/osqa-server/forum/upfiles"
-  action :run
-  environment ({'HOME' => '/home/osqa/osqa-server'})
+
+# set writable attribs for the places we need to write to
+%W[ forum/upfiles log ].each do |dir|
+  directory "#{node[:osqa][:app_dir]}/#{dir}" do
+    owner "osqa"
+    group "osqa"
+    mode 0770
+  end
 end
-execute "chmod log" do
-  command "chmod -R g+w /home/osqa/osqa-server/log"
-  action :run
-  environment ({'HOME' => '/home/osqa/osqa-server'})
+
+# same
+file "#{node[:osqa][:app_dir]}/log/django.osqa.log" do
+  owner "osqa"
+  group "osqa"
+  mode 0660
 end
+
 # Restart of Apache
 service "apache2" do
   action :restart
 end
+
+# open the ports to connect 
+iptables_rule "osqa"

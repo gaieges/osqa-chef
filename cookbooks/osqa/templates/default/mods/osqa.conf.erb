@@ -1,12 +1,12 @@
 # Must be readable and writable by apache
-WSGISocketPrefix ${APACHE_RUN_DIR}
+WSGISocketPrefix /tmp
 
 #NOTE: all urs below will need to be adjusted if
 #settings.FORUM_SCRIPT_ALIAS !='' (e.g. = 'forum/')
 #this allows "rooting" forum at [http://example.com/forum], if you like
 <VirtualHost *:80>
 	ServerAdmin <%= node[:osqa][:server_admin_email] %>
-	DocumentRoot /home/osqa/osqa-server
+	DocumentRoot <%= node['osqa']['app_dir'] %>
 	ServerName <%= node[:osqa][:server_name] %>
 
 	#run mod_wsgi process for django in daemon mode
@@ -17,20 +17,21 @@ WSGISocketPrefix ${APACHE_RUN_DIR}
 
 	#force all content to be served as static files
 	#otherwise django will be crunching images through itself wasting time
-	Alias /m/ "/home/osqa/osqa-server/forum/skins/"
-        <Directory "/home/osqa/osqa-server/forum/skins">
+	Alias /m/ "<%= node['osqa']['app_dir'] %>/forum/skins/"
+	
+        <Directory "<%= node['osqa']['app_dir'] %>/forum/skins">
                 Order allow,deny
                 Allow from all
         </Directory>
-	Alias /upfiles/ "/home/osqa/osqa-server/forum/upfiles/"
-	<Directory "/home/osqa/osqa-server/forum/upfiles">
+	Alias /upfiles/ "<%= node['osqa']['app_dir'] %>/forum/upfiles/"
+	<Directory "<%= node['osqa']['app_dir'] %>/forum/upfiles">
 		Order deny,allow
 		Allow from all
 	</Directory>
 
 	#this is your wsgi script described in the prev section
-	WSGIScriptAlias / /home/osqa/osqa-server/osqa.wsgi
+	WSGIScriptAlias / <%= node['osqa']['app_dir'] %>/osqa.wsgi
 
-	CustomLog ${APACHE_LOG_DIR}/osqa.access.log common
-	ErrorLog ${APACHE_LOG_DIR}/osqa.error.log
+	CustomLog <%= node['apache']['log_dir'] %>/osqa.access.log common
+	ErrorLog <%= node['apache']['log_dir'] %>/osqa.error.log
 </VirtualHost>

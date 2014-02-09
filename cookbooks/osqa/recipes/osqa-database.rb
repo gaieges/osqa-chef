@@ -16,28 +16,38 @@
 # limitations under the License.
 #
 
-# Create a new osqa user if doesn't exist
-execute "create osqa user" do
-  command "/usr/bin/mysql -u #{node[:osqa][:mysql_admin_username]} -p#{node[:osqa][:mysql_admin_password]} -D mysql -r -B -N -e \"CREATE USER '#{node[:osqa][:mysql_user_name]}'@'%'\""
-  not_if "/usr/bin/mysql -u #{node[:osqa][:mysql_admin_username]} -p#{node[:osqa][:mysql_admin_password]} -D mysql -r -B -N -e \"SELECT * FROM user where User='#{node[:osqa][:mysql_user_name]}' and Host = '%'\" | grep -q #{node[:osqadb][:mysql_user_name]}"
+# bug with debian boxes - need to ensure up to date repos
+execute "apt-get-update" do
+  command "apt-get update"
+  action :run
+end if platform_family?("debian")
+
+package "make"
+gem_package "mysql"
+
+# add the right recipies
+include_recipe "mysql::server"
+include_recipe "database"
+
+# we'll use this connection a few times
+mysql_root_connection = {
+  :host     => node[:osqa][:sqlserverip],
+  :username => 'root',
+  :password => node['mysql']['server_root_password']
+}
+
+# add the db
+mysql_database 'osqa' do
+  connection mysql_root_connection
+  action :create
 end
 
-# Update his password
-execute "set password for osqa" do
-  command "/usr/bin/mysql -u #{node[:osqa][:mysql_admin_username]} -p#{node[:osqa][:mysql_admin_password]} -D mysql -r -B -N -e \"SET PASSWORD FOR '#{node[:osqa][:mysql_user_name]}'@'%' = PASSWORD('#{node[:osqa][:mysql_user_password]}')\""
-end
-
-# Remove existing osqa database
-execute "remove existing osqa database" do
-  command "/usr/bin/mysql -u #{node[:osqa][:mysql_admin_username]} -p#{node[:osqa][:mysql_admin_password]} -D mysql -r -B -N -e \"DROP DATABASE IF EXISTS osqa\""
-end
-
-# Create a new osqa database
-execute "create new osqa database" do
-  command "/usr/bin/mysql -u #{node[:osqa][:mysql_admin_username]} -p#{node[:osqa][:mysql_admin_password]} -D mysql -r -B -N -e \"CREATE DATABASE osqa DEFAULT CHARACTER SET UTF8 COLLATE utf8_general_ci\""
-end
-
-# Grant rights to osqa user on osqa database
-execute "grant user all rights" do
-  command "/usr/bin/mysql -u #{node[:osqa][:mysql_admin_username]} -p#{node[:osqa][:mysql_admin_password]} -D mysql -r -B -N -e \"GRANT ALL on osqa.* to '#{node[:osqa][:mysql_user_name]}'@'%'\""
+# add the user to that db
+mysql_database_user 'osqa' do
+  connection mysql_root_connection
+  password node[:osqa][:mysql_user_password]
+  database_name 'osqa'
+  host node[:osqa][:sqlserverip]
+  privileges [:all]
+  action [:create, :grant]
 end
