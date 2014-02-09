@@ -22,8 +22,9 @@ execute "apt-get-update" do
   action :run
 end if platform_family?("debian")
 
-package "make"
-gem_package "mysql"
+# seem to have problems with certain versions of ruby / mysql gem.  use this to fix
+#package "make"
+#gem_package "mysql"
 
 # add the right recipies
 include_recipe "mysql::server"
